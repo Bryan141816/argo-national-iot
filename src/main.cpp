@@ -6,10 +6,10 @@
 #include <flow_handler.h>
 #include <relay_handler.h>
 String phoneNumber = "+639925838621";
-String smsMessage  = "Hello! Kamote This is a test SMS from Arduino + SIM800L.";
+String smsMessage = "Hello! Kamote This is a test SMS from Arduino + SIM800L.";
 
 unsigned long lastDhtRead = 0;
-const unsigned long dhtInterval = 1000; 
+const unsigned long dhtInterval = 1000;
 
 void setup()
 {
@@ -37,11 +37,42 @@ void loop()
   {
     lastDhtRead = currentMillis;
     dhtLoop();
-    // getTemperatureC();
-    // getHumidity();
-    // getPressure();
-    // soilMoisturePercent();
-    // getFlowRate();
-    // setRelay(LOW);
+
+    float temperature = getTemperatureC();
+    float humidity = getHumidity();
+    float pressure = getPressure();
+    int moisture = soilMoisturePercent();
+    float flowrate = getFlowRate();
+
+    Serial.println("----- SENSOR READINGS -----");
+
+    Serial.print("Temperature: ");
+    Serial.print(temperature);
+    Serial.println(" °C");
+
+    Serial.print("Humidity: ");
+    Serial.print(humidity);
+    Serial.println(" %");
+
+    Serial.print("Pressure: ");
+    Serial.print(pressure);
+    Serial.println(" hPa");
+
+    Serial.print("Soil Moisture: ");
+    Serial.print(moisture);
+    Serial.println(" %");
+
+    Serial.print("Water Flow Rate: ");
+    Serial.print(flowrate);
+    Serial.println(" L/min");
+    
+    if (temperature >= 30)
+    {
+      setRelay(LOW);
+    }
+    else
+    {
+      setRelay(HIGH);
+    }
   }
 }
