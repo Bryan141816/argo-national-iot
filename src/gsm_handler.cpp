@@ -1,7 +1,7 @@
 #include <gsm_handler.h>
 #include <SoftwareSerial.h>
 
-SoftwareSerial sim800(3, 2); // SIM800 TX -> D3, SIM800 RX -> D2
+SoftwareSerial sim800(10, 11); // SIM800 TX -> D10, SIM800 RX -> D11
 
 
 void bridgeSerial()

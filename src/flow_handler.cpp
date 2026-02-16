@@ -1,7 +1,7 @@
 #include <flow_handler.h>
 
 volatile int NumPulses = 0;
-const int PinSensor = 2;
+const int PinSensor = 3;
 const float factor_conversion = 7.5;
 
 float flow_L_m = 0;

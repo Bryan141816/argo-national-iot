@@ -1,7 +1,7 @@
 #include <dht_handler.h>
 #include <DHT.h>
 
-#define DHT11_PIN 7
+#define DHT11_PIN 2
 #define DHTTYPE DHT11
 
 static DHT dht(DHT11_PIN, DHTTYPE);
