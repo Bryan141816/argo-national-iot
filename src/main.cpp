@@ -4,7 +4,7 @@
 #include <soil_moisture_handler.h>
 #include <pressure_handler.h>
 #include <flow_handler.h>
-
+#include <relay_handler.h>
 String phoneNumber = "+639925838621";
 String smsMessage  = "Hello! Kamote This is a test SMS from Arduino + SIM800L.";
 
@@ -18,6 +18,7 @@ void setup()
   soilMoisturePercent();
   pressureSetup();
   waterFlowSetup();
+  relaySetup();
 
   if (!sendSMS(phoneNumber, smsMessage))
   {
@@ -41,5 +42,6 @@ void loop()
     // getPressure();
     // soilMoisturePercent();
     // getFlowRate();
+    // setRelay(LOW);
   }
 }
