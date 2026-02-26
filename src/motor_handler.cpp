@@ -17,7 +17,7 @@ void motorStartLow()
 {
     digitalWrite(in1, HIGH);
     digitalWrite(in2, LOW);
-    analogWrite(enA, 255); //190
+    analogWrite(enA, 190); //190
 }
 
 void motorStartHigh()
