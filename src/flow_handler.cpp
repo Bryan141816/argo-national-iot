@@ -10,13 +10,11 @@ float volume = 0;
 unsigned long lastMeasureTime = 0;
 const unsigned long measureInterval = 1000; // 1 second
 
-
 // Interrupt function
 void PulseCount()
 {
     NumPulses++;
 }
-
 
 // Setup
 void waterFlowSetup()
@@ -26,7 +24,6 @@ void waterFlowSetup()
 
     Serial.println("Water Flow Sensor Initialized");
 }
-
 
 // Loop (non-blocking version)
 void waterFlowLoop()
@@ -43,16 +40,15 @@ void waterFlowLoop()
         interrupts();
 
         flow_L_m = pulses / factor_conversion;
-        volume += (flow_L_m / 60.0);  // since measured per second
+        volume += (flow_L_m / 60.0); // since measured per second
 
-        // Serial.print("Flow: ");
-        // Serial.print(flow_L_m, 3);
-        // Serial.print(" L/min | Volume: ");
-        // Serial.print(volume, 3);
-        // Serial.println(" L");
+        // Serial.print("Pulse: ");
+        // Serial.println(pulses);
+        // // Serial.print(" L/min | Volume: ");
+        // // Serial.print(volume, 3);
+        // // Serial.println(" L");
     }
 }
-
 
 // Getters
 float getFlowRate()

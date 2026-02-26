@@ -1,9 +1,11 @@
 #include <pressure_handler.h>
 
 static uint8_t pressureSensorPin = A1;
-const float pressureZero = 90.4;
-const float pressureMax = 1023.6;
-const float pressuretransducermaxPSI = 100.0;
+
+// Calibration points
+const float rawZero = 100.0;   // raw value at 0 bar
+const float rawMax  = 200.0;   // raw value at 4 bar
+const float maxBar  = 4.0;     // max pressure
 
 void pressureSetup()
 {
@@ -12,13 +14,27 @@ void pressureSetup()
 
 float getPressure()
 {
-  float pressureValue = analogRead(pressureSensorPin);
+  float raw = analogRead(pressureSensorPin);
 
-  pressureValue = ((pressureValue - pressureZero) * pressuretransducermaxPSI) /
-                  (pressureMax - pressureZero);
-  if (pressureValue < 1.5)
+  // Linear conversion
+  float pressureBar = ((raw - rawZero) * maxBar) /
+                      (rawMax - rawZero);
+
+  // Clamp below 0
+  if (pressureBar < 0)
   {
-    pressureValue = 0;
+    pressureBar = 0;
   }
-  return pressureValue;
+
+  // Clamp above maxBar
+  if (pressureBar > maxBar)
+  {
+    pressureBar = maxBar;
+  }
+
+  // Serial.print("Pressure: ");
+  // Serial.println(raw);
+  
+
+  return pressureBar;
 }

@@ -16,9 +16,18 @@ void dhtSetup()
 
 void dhtLoop()
 {
-    lastHumidity = dht.readHumidity();
-    lastTempC = dht.readTemperature();
+    float humidity = dht.readHumidity();
+    float tempC = dht.readTemperature();
+
+    if (!isnan(humidity)) {
+        lastHumidity = humidity;
+    }
+
+    if (!isnan(tempC)) {
+        lastTempC = tempC;
+    }
 }
+
 
 float getTemperatureC()
 {

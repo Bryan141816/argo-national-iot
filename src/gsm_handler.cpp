@@ -1,88 +1,148 @@
-#include <gsm_handler.h>
+#include "gsm_handler.h"
 #include <SoftwareSerial.h>
 
-SoftwareSerial sim800(10, 11); // SIM800 TX -> D10, SIM800 RX -> D11
+// If wired: SIM800L TX -> D10, RX -> D11
+static SoftwareSerial sim800(10, 11);
 
-
-void bridgeSerial()
+// ---------- Helper: flush SIM800 buffer ----------
+static void flushSIM800()
 {
-  while (Serial.available()) sim800.write(Serial.read());
-  while (sim800.available()) Serial.write(sim800.read());
+  while (sim800.available()) sim800.read();
 }
 
-bool waitForResponse(const char* expected, unsigned long timeoutMs)
+// ---------- Helper: wait for response ----------
+static bool waitForResponse(const char* expected, unsigned long timeoutMs)
 {
   unsigned long start = millis();
-  String buf;
+  String buffer;
 
   while (millis() - start < timeoutMs)
   {
     while (sim800.available())
     {
-      char c = sim800.read();
-      buf += c;
-      Serial.write(c);
+      char c = (char)sim800.read();
+      buffer += c;
 
-      if (buf.indexOf(expected) != -1) return true;
-      if (buf.indexOf("ERROR") != -1) return false;
+      // Mirror to Serial (debug)
+      if (Serial) Serial.write(c);
+
+      if (buffer.indexOf(expected) != -1) return true;
+      if (buffer.indexOf("ERROR") != -1) return false;
     }
   }
   return false;
 }
 
-bool sendSMS(const String& number, const String& text)
+// ---------- Check SIM ready ----------
+static bool isSIMReady()
 {
-  if (number.length() < 8 || text.length() == 0) return false;
-
-  Serial.println("\n--- Sending SMS ---");
-
-  sim800.println("AT");
-  if (!waitForResponse("OK", 2000)) return false;
-
-  sim800.println("AT+CMGF=1");
-  if (!waitForResponse("OK", 2000)) return false;
-
-  sim800.print("AT+CMGS=\"");
-  sim800.print(number);
-  sim800.println("\"");
-  if (!waitForResponse(">", 5000)) return false;
-
-  sim800.print(text);
-  sim800.write(26); // Ctrl+Z
-
-  if (!waitForResponse("+CMGS", 15000)) return false;
-  if (!waitForResponse("OK", 15000)) return false;
-
-  Serial.println("\n--- SMS Sent ---");
-  return true;
+  flushSIM800();
+  sim800.println("AT+CPIN?");
+  return waitForResponse("READY", 5000);
 }
 
-void gsmSetup()
+// ---------- Wait for network registration ----------
+static bool waitForNetwork(unsigned long totalTimeoutMs = 30000)
 {
-  Serial.begin(9600);
-  sim800.begin(9600);
-  delay(1500);
+  unsigned long start = millis();
 
-  Serial.println("SIM800L startup check...");
+  while (millis() - start < totalTimeoutMs)
+  {
+    flushSIM800();
+    sim800.println("AT+CREG?");
 
+    unsigned long t0 = millis();
+    String buf;
+
+    while (millis() - t0 < 3000)
+    {
+      while (sim800.available())
+      {
+        char c = (char)sim800.read();
+        buf += c;
+        if (Serial) Serial.write(c);
+      }
+    }
+
+    // home = ,1  roaming = ,5
+    if (buf.indexOf(",1") != -1 || buf.indexOf(",5") != -1)
+      return true;
+
+    delay(1000);
+  }
+  return false;
+}
+
+// ===== Public API expected by main.cpp =====
+
+void gsmSetup(unsigned long baud)
+{
+  if (Serial) Serial.println("Initializing SIM800L...");
+  sim800.begin(baud);
+
+  delay(3000);
+
+  // Echo off (optional)
+  sim800.println("ATE0");
+  waitForResponse("OK", 2000);
+
+  // Basic AT test (optional)
   sim800.println("AT");
   waitForResponse("OK", 2000);
-
-  sim800.println("AT+CSQ");
-  waitForResponse("OK", 2000);
-
-  sim800.println("AT+CREG?");
-  waitForResponse("OK", 2000);
-
-  // if (!sendSMS(phoneNumber, smsMessage))
-  // {
-  //   Serial.println("\nSMS FAILED (power/signal/SIM/wiring).");
-  // }
-
-  Serial.println("\nSerial bridge active.");
 }
 
 void gsmLoop()
 {
-  bridgeSerial();
+  // Keep empty unless you later add SMS receive, etc.
+}
+
+// ✅ This is what main.cpp should call
+bool sendSMS(const String& number, const String& message)
+{
+  if (Serial) Serial.println("Sending SMS...");
+
+  if (!isSIMReady())
+  {
+    if (Serial) Serial.println("SIM not ready.");
+    return false;
+  }
+
+  if (Serial) Serial.println("Waiting for network...");
+  if (!waitForNetwork(30000))
+  {
+    if (Serial) Serial.println("Network not registered.");
+    return false;
+  }
+
+  // Basic attention
+  sim800.println("AT");
+  if (!waitForResponse("OK", 2000)) return false;
+
+  // Text mode
+  sim800.println("AT+CMGF=1");
+  if (!waitForResponse("OK", 3000)) return false;
+
+  // Recipient
+  sim800.print("AT+CMGS=\"");
+  sim800.print(number);
+  sim800.println("\"");
+
+  // Wait for prompt
+  if (!waitForResponse(">", 5000)) return false;
+
+  // Body + Ctrl+Z
+  sim800.print(message);
+  sim800.write((uint8_t)26);
+
+  // Accept +CMGS then OK (some modules may only return OK)
+  if (!waitForResponse("+CMGS", 20000))
+  {
+    if (!waitForResponse("OK", 20000)) return false;
+    return true;
+  }
+
+  if (!waitForResponse("OK", 20000)) return false;
+
+  if (Serial) Serial.println("SMS Sent Successfully!");
+  return true;
 }
