@@ -7,7 +7,7 @@
 static DHT dht(DHT11_PIN, DHTTYPE);
 
 static float lastTempC = 0.0;
-static float lastHumidity = 0.0;
+//static float lastHumidity = 0.0;
 
 void dhtSetup()
 {
@@ -16,12 +16,12 @@ void dhtSetup()
 
 void dhtLoop()
 {
-    float humidity = dht.readHumidity();
+  //  float humidity = dht.readHumidity();
     float tempC = dht.readTemperature();
 
-    if (!isnan(humidity)) {
-        lastHumidity = humidity;
-    }
+ //   if (!isnan(humidity)) {
+ //       lastHumidity = humidity;
+ //   }
 
     if (!isnan(tempC)) {
         lastTempC = tempC;
@@ -34,7 +34,7 @@ float getTemperatureC()
     return lastTempC;
 }
 
-float getHumidity()
-{
-    return lastHumidity;
-}
+//float getHumidity()
+//{
+//    return lastHumidity;
+//}

@@ -4,37 +4,31 @@
 #include <soil_moisture_handler.h>
 #include <pressure_handler.h>
 #include <flow_handler.h>
-// #include <relay_handler.h>
 #include <motor_handler.h>
 
 // ================= USER SETTINGS =================
-static const String PHONE_NUMBER = "09999698585";   // Recommended: +639xxxxxxxxx
+static const String PHONE_NUMBER = "09089865033";   // Recommended: +639xxxxxxxxx
 
 static const unsigned long SENSOR_INTERVAL_MS = 1000;
 static const unsigned long SMS_COOLDOWN_MS    = 5000;
 
-// Soil moisture thresholds
-static const int SOIL_LOW_ON_PERCENT   = 50;  // Soil < 50% means "low"
-static const int SOIL_HIGH_OFF_PERCENT = 80;  // Soil >= 80% means "high" -> OFF always
+// Soil moisture thresholds (percent)
+static const int SOIL_LOW_ON_PERCENT   = 50;  // Soil < 50%  → LOW
+static const int SOIL_HIGH_OFF_PERCENT = 80;  // Soil > 80%  → HIGH (OFF)
 
-// Temperature thresholds
-static const float TEMP_HIGH_C = 22.0;  // High temp > 22C
-static const float TEMP_LOW_C  = 16.0;  // Low temp  < 16C
-
-// Humidity thresholds for your flow rules
-// NOTE: you said "low RH" but wrote ">80-90%". That's high RH.
-// This implementation treats "low RH" as <= thresholds below.
-static const float HUMIDITY_A1_MAX = 80.0;  // A1 needs RH <= 80%
-static const float HUMIDITY_A2_MAX = 35.0;  // A2 needs RH <= 35%
-// ================================================
+// Temperature thresholds (°C)
+static const float TEMP_HIGH_C = 22.0;   // Above this is considered HIGH
+static const float TEMP_LOW_C  = 16.0;   // Below this is considered LOW
+// =================================================
 
 enum ConditionCode
 {
   COND_A1,   // low soil, high temp
   COND_A2,   // low soil, low temp
+  COND_M1,   // mid soil, high temp
+  COND_M2,   // mid soil, low temp
   COND_B1,   // high soil, high temp
-  COND_B2,   // high soil, low temp
-  COND_MID   // anything else (middle zones)
+  COND_B2    // high soil, low temp
 };
 
 enum PumpMode
@@ -61,9 +55,11 @@ static const char* conditionToString(ConditionCode c)
   {
     case COND_A1: return "A1";
     case COND_A2: return "A2";
+    case COND_M1: return "M1";
+    case COND_M2: return "M2";
     case COND_B1: return "B1";
     case COND_B2: return "B2";
-    default:      return "MID";
+    default:      return "UNKNOWN";
   }
 }
 
@@ -79,90 +75,68 @@ static const char* pumpModeToString(PumpMode mode)
 
 static ConditionCode determineCondition(int moisture, float tempC)
 {
-  const bool soilLow  = (moisture < SOIL_LOW_ON_PERCENT);
-  const bool soilHigh = (moisture >= SOIL_HIGH_OFF_PERCENT);
+  bool lowSoil = (moisture < SOIL_LOW_ON_PERCENT);
+  bool midSoil = (moisture >= SOIL_LOW_ON_PERCENT && moisture <= SOIL_HIGH_OFF_PERCENT);
+  // highSoil is the remaining case (moisture > SOIL_HIGH_OFF_PERCENT)
 
-  const bool tempHigh = (tempC > TEMP_HIGH_C);
-  const bool tempLow  = (tempC < TEMP_LOW_C);
+  bool highTemp = (tempC > TEMP_HIGH_C);
+  bool lowTemp  = (tempC < TEMP_LOW_C);
 
-  if (soilLow && tempHigh) return COND_A1;
-  if (soilLow && tempLow)  return COND_A2;
-
-  if (soilHigh && tempHigh) return COND_B1;
-  if (soilHigh && tempLow)  return COND_B2;
-
-  return COND_MID;
+  if (lowSoil)
+  {
+    if (highTemp) return COND_A1;
+    if (lowTemp)  return COND_A2;
+    return COND_A1; // default if temperature is in between
+  }
+  else if (midSoil)
+  {
+    if (highTemp) return COND_M1;
+    if (lowTemp)  return COND_M2;
+    return COND_M1; // default
+  }
+  else // highSoil
+  {
+    if (highTemp) return COND_B1;
+    if (lowTemp)  return COND_B2;
+    return COND_B1; // default
+  }
 }
 
-// Apply pump control based on YOUR RULES + hysteresis middle zone
-static void applyPumpLogic(int moisture, float tempC, float humidityPct)
+// Pump control based ONLY on soil moisture (table rules)
+static void applyPumpLogic(int moisture)
 {
-  // RULE: If soil moisture is high (~80%) => OFF always
-  if (moisture >= SOIL_HIGH_OFF_PERCENT)
+  if (moisture < SOIL_LOW_ON_PERCENT)          // Low soil → HIGH flow
+  {
+    motorStartHigh();
+    pumpOn = true;
+    pumpMode = PUMP_HIGH;
+  }
+  else if (moisture <= SOIL_HIGH_OFF_PERCENT)  // Mid soil → LOW flow
+  {
+    motorStartLow();
+    pumpOn = true;
+    pumpMode = PUMP_LOW;
+  }
+  else                                          // High soil → OFF
   {
     motorStop();
     pumpOn = false;
     pumpMode = PUMP_OFF;
-    return;
-  }
-
-  // Soil LOW (<50): pump ON, choose HIGH/LOW flow based on temp+humidity rules
-  if (moisture < SOIL_LOW_ON_PERCENT)
-  {
-    const bool tempHigh = (tempC > TEMP_HIGH_C);
-    const bool tempLow  = (tempC < TEMP_LOW_C);
-
-    // A1: HIGH flow if soil low + temp high + low humidity
-    if (tempHigh && humidityPct <= HUMIDITY_A1_MAX)
-    {
-      motorStartHigh();
-      pumpOn = true;
-      pumpMode = PUMP_HIGH;
-      return;
-    }
-
-    // A2: LOW flow if soil low + temp low + low humidity
-    if (tempLow && humidityPct <= HUMIDITY_A2_MAX)
-    {
-      motorStartLow();
-      pumpOn = true;
-      pumpMode = PUMP_LOW;
-      return;
-    }
-
-    // If soil low but doesn't match A1/A2 rules:
-    // keep ON but default to LOW flow (safer)
-    motorStartLow();
-    pumpOn = true;
-    pumpMode = PUMP_LOW;
-    return;
-  }
-
-  // Soil is in middle zone (50–80): keep previous state (hysteresis)
-  if (pumpOn)
-  {
-    motorStartLow();
-    pumpMode = PUMP_LOW;
-  }
-  else
-  {
-    motorStop();
-    pumpMode = PUMP_OFF;
   }
 }
 
-static String buildSensorReportSMS(float temperatureC, float humidityPct, int moisturePct,
-                                  float flowRateLpm, bool pumpState,
-                                  PumpMode mode, ConditionCode cond)
+static String buildSensorReportSMS(float temperatureC, int moisturePct,
+                                   float pressureBar, float flowRateLpm, bool pumpState,
+                                   PumpMode mode, ConditionCode cond)
 {
   String msg;
-  msg.reserve(260);
+  msg.reserve(250);
 
   msg += "------ SENSOR READINGS ------\n";
   msg += "Condition: " + String(conditionToString(cond)) + "\n";
   msg += "Temperature (C): " + String(temperatureC, 2) + "\n";
-  msg += "Humidity (%): " + String(humidityPct, 2) + "\n";
   msg += "Soil Moisture (%): " + String(moisturePct) + "\n";
+  msg += "Pressure (bar): " + String(pressureBar, 2) + "\n";
   msg += "Water Flow Rate (L/min): " + String(flowRateLpm, 2) + "\n";
 
   msg += "Pump Status: ";
@@ -174,16 +148,16 @@ static String buildSensorReportSMS(float temperatureC, float humidityPct, int mo
   return msg;
 }
 
-static void printReadings(float temperatureC, float humidityPct, int moisturePct,
-                          float flowRateLpm, bool pumpState,
+static void printReadings(float temperatureC, int moisturePct,
+                          float pressureBar, float flowRateLpm, bool pumpState,
                           PumpMode mode, ConditionCode cond)
 {
   Serial.println();
   Serial.println("------ SENSOR READINGS ------");
   Serial.print("Condition: ");                Serial.println(conditionToString(cond));
   Serial.print("Temperature (C): ");          Serial.println(temperatureC, 2);
-  Serial.print("Humidity (%): ");             Serial.println(humidityPct, 2);
   Serial.print("Soil Moisture (%): ");        Serial.println(moisturePct);
+  Serial.print("Pressure (bar): ");           Serial.println(pressureBar, 2);
   Serial.print("Water Flow Rate (L/min): ");  Serial.println(flowRateLpm, 2);
 
   Serial.print("Pump Status: ");              Serial.println(pumpState ? "ON" : "OFF");
@@ -203,8 +177,9 @@ void setup()
   motorSetup();
   gsmSetup();
 
-  dhtSetup();
-  (void)soilMoisturePercent();
+  dhtSetup();                    // still needed for temperature
+  pressureSetup();
+  (void)soilMoisturePercent();   // warm‑up read
   waterFlowSetup();
 
   Serial.println("System ready.");
@@ -219,21 +194,21 @@ void loop()
   if (now - lastSensorReadMs < SENSOR_INTERVAL_MS) return;
   lastSensorReadMs = now;
 
-  // Read sensors
+  // Read sensors (humidity is ignored)
   dhtLoop();
-  const float temperature = getTemperatureC();
-  const float humidity    = getHumidity();
+  const float temperature = getTemperatureC();   // DHT provides temperature
   const int moisture      = soilMoisturePercent();
+  const float pressure    = getPressure();
   const float flowrate    = getFlowRate();
 
-  // Apply new pump rules
-  applyPumpLogic(moisture, temperature, humidity);
+  // Apply pump rules (based only on soil moisture)
+  applyPumpLogic(moisture);
 
-  // Determine condition label
+  // Determine condition label (based on soil + temperature)
   const ConditionCode cond = determineCondition(moisture, temperature);
 
-  // Serial output
-  printReadings(temperature, humidity, moisture, flowrate, pumpOn, pumpMode, cond);
+  // Print to Serial (humidity omitted)
+  printReadings(temperature, moisture, pressure, flowrate, pumpOn, pumpMode, cond);
 
   // SMS: send only on pump ON/OFF change (or first time) + cooldown
   const bool stateChanged   = (!hasNotifiedYet) || (pumpOn != lastNotifiedPumpState);
@@ -242,7 +217,7 @@ void loop()
   if (stateChanged && cooldownPassed)
   {
     const String sms = buildSensorReportSMS(
-      temperature, humidity, moisture, flowrate,
+      temperature, moisture, pressure, flowrate,
       pumpOn, pumpMode, cond
     );
 
