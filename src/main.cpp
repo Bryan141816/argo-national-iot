@@ -7,7 +7,7 @@
 #include <motor_handler.h>
 
 // ================= USER SETTINGS =================
-static const String PHONE_NUMBER = "09089865033";   // Recommended: +639xxxxxxxxx
+static const String PHONE_NUMBER = "09956229639";   // Recommended: +639xxxxxxxxx
 
 static const unsigned long SENSOR_INTERVAL_MS = 1000;
 static const unsigned long SMS_COOLDOWN_MS    = 5000;
