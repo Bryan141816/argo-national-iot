@@ -7,7 +7,7 @@
 #include <motor_handler.h>
 
 // ================= USER SETTINGS =================
-static const String PHONE_NUMBER = "09956229639";   // Recommended: +639xxxxxxxxx
+static const String PHONE_NUMBER = "09672285291";   // Recommended: +639xxxxxxxxx
 
 static const unsigned long SENSOR_INTERVAL_MS = 1000;
 static const unsigned long SMS_COOLDOWN_MS    = 5000;
@@ -17,8 +17,8 @@ static const int SOIL_LOW_ON_PERCENT   = 50;  // Soil < 50%  → LOW
 static const int SOIL_HIGH_OFF_PERCENT = 80;  // Soil > 80%  → HIGH (OFF)
 
 // Temperature thresholds (°C)
-static const float TEMP_HIGH_C = 22.0;   // Above this is considered HIGH
-static const float TEMP_LOW_C  = 16.0;   // Below this is considered LOW
+static const float TEMP_HIGH_C = 30.0;   // Above this is considered HIGH
+static const float TEMP_LOW_C  = 20.0;   // Below this is considered LOW
 // =================================================
 
 enum ConditionCode
@@ -39,14 +39,13 @@ enum PumpMode
 };
 
 static unsigned long lastSensorReadMs = 0;
-static unsigned long lastSmsSentMs    = 0;
+static unsigned long lastSmsSentMs    = 0;          // will be initialised to allow first send
 
 static bool pumpOn = false;
 static PumpMode pumpMode = PUMP_OFF;
 
-// SMS state tracking (send only on ON/OFF change)
-static bool lastNotifiedPumpState = false;
-static bool hasNotifiedYet = false;
+// No longer need lastNotifiedPumpState / hasNotifiedYet for SMS logic,
+// but we keep them for potential future use (optional). They are not used here.
 
 // -------------------- Helpers --------------------
 static const char* conditionToString(ConditionCode c)
@@ -67,8 +66,8 @@ static const char* pumpModeToString(PumpMode mode)
 {
   switch (mode)
   {
-    case PUMP_HIGH: return "HIGH FLOW (2-4 bar)";
-    case PUMP_LOW:  return "LOW FLOW (1-2 bar)";
+    case PUMP_HIGH: return "HIGH FLOW";
+    case PUMP_LOW:  return "LOW FLOW";
     default:        return "OFF";
   }
 }
@@ -102,26 +101,37 @@ static ConditionCode determineCondition(int moisture, float tempC)
   }
 }
 
-// Pump control based ONLY on soil moisture (table rules)
-static void applyPumpLogic(int moisture)
+// Pump control based on condition (A1, A2, M1, M2, B1, B2)
+static void applyPumpLogic(ConditionCode cond)
 {
-  if (moisture < SOIL_LOW_ON_PERCENT)          // Low soil → HIGH flow
+  switch(cond)
   {
-    motorStartHigh();
-    pumpOn = true;
-    pumpMode = PUMP_HIGH;
-  }
-  else if (moisture <= SOIL_HIGH_OFF_PERCENT)  // Mid soil → LOW flow
-  {
-    motorStartLow();
-    pumpOn = true;
-    pumpMode = PUMP_LOW;
-  }
-  else                                          // High soil → OFF
-  {
-    motorStop();
-    pumpOn = false;
-    pumpMode = PUMP_OFF;
+    case COND_A1:  // low soil, high temp → HIGH flow
+      motorStartHigh();
+      pumpOn = true;
+      pumpMode = PUMP_HIGH;
+      break;
+      
+    case COND_A2:  // low soil, low temp → LOW flow
+    case COND_M1:  // mid soil, high temp → LOW flow
+      motorStartLow();
+      pumpOn = true;
+      pumpMode = PUMP_LOW;
+      break;
+      
+    case COND_M2:  // mid soil, low temp → OFF
+    case COND_B1:  // high soil, high temp → OFF
+    case COND_B2:  // high soil, low temp → OFF
+      motorStop();
+      pumpOn = false;
+      pumpMode = PUMP_OFF;
+      break;
+      
+    default:
+      motorStop();
+      pumpOn = false;
+      pumpMode = PUMP_OFF;
+      break;
   }
 }
 
@@ -182,6 +192,9 @@ void setup()
   (void)soilMoisturePercent();   // warm‑up read
   waterFlowSetup();
 
+  // Allow first SMS to be sent immediately (cooldown passes right away)
+  lastSmsSentMs = -SMS_COOLDOWN_MS;
+
   Serial.println("System ready.");
 }
 
@@ -201,37 +214,42 @@ void loop()
   const float pressure    = getPressure();
   const float flowrate    = getFlowRate();
 
-  // Apply pump rules (based only on soil moisture)
-  applyPumpLogic(moisture);
-
   // Determine condition label (based on soil + temperature)
+  // This MUST come BEFORE applyPumpLogic since we need cond
   const ConditionCode cond = determineCondition(moisture, temperature);
+
+  // Keep previous pump state to detect ON transition
+  static bool prevPumpOn = false;
+
+  // Apply pump rules (now based on condition, not just moisture)
+  applyPumpLogic(cond);  // Now cond is defined!
 
   // Print to Serial (humidity omitted)
   printReadings(temperature, moisture, pressure, flowrate, pumpOn, pumpMode, cond);
 
-  // SMS: send only on pump ON/OFF change (or first time) + cooldown
-  const bool stateChanged   = (!hasNotifiedYet) || (pumpOn != lastNotifiedPumpState);
-  const bool cooldownPassed = (now - lastSmsSentMs >= SMS_COOLDOWN_MS);
+  // SMS: send only when pump turns ON (transition from OFF to ON)
+  bool justTurnedOn = (pumpOn && !prevPumpOn);
+  bool cooldownPassed = (now - lastSmsSentMs >= SMS_COOLDOWN_MS);
 
-  if (stateChanged && cooldownPassed)
+  if (justTurnedOn && cooldownPassed)
   {
     const String sms = buildSensorReportSMS(
       temperature, moisture, pressure, flowrate,
       pumpOn, pumpMode, cond
     );
 
-    Serial.println("Sending SMS report...");
+    Serial.println("Sending SMS report (pump ON)...");
     if (sendSMS(PHONE_NUMBER, sms))
     {
       Serial.println("✅ SMS sent.");
       lastSmsSentMs = now;
-      lastNotifiedPumpState = pumpOn;
-      hasNotifiedYet = true;
     }
     else
     {
       Serial.println("❌ SMS failed.");
     }
   }
+
+  // Update previous state for next loop
+  prevPumpOn = pumpOn;
 }
